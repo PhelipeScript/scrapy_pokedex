@@ -123,7 +123,6 @@ class PokeSpider(scrapy.Spider):
     pokemon['abilities'] = defaultdict(dict)
     i = 0
     for (name, is_hidden_ability), url in zip(all_ability_names, all_ability_urls):
-      i += 1
       yield response.follow(
         url, 
         self.parse_get_ability_description, 
@@ -132,10 +131,11 @@ class PokeSpider(scrapy.Spider):
           "is_hidden_ability": is_hidden_ability,
           "url": self.base_url + url,
           "pokemon": pokemon,
-          "can_save": i == len(all_ability_names)
+          "can_save": i == len(all_ability_names)-1
         },
         dont_filter=True 
       )
+      i += 1
     
   def parse_get_ability_description(self, response):
     name = response.meta.get("name")
