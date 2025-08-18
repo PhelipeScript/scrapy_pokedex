@@ -21,35 +21,28 @@ class PokeSpider(scrapy.Spider):
   def parse(self, response):
     rows = response.css('table#pokedex > tbody > tr')
     for row in rows:
-      number = row.css("td:first-child > span::text").get()
-      name = row.css("td:nth-child(2) > a::text").get()
-      nickname = row.css("td:nth-child(2) > small::text").get()
-      url = row.css("td:nth-child(2) > a::attr(href)").get()
-      types = row.css("td:nth-child(3) > a::text").getall()
-      
+      pokemon = defaultdict(dict)
+      pokemon['number'] = row.css("td:first-child > span::text").get()
+      pokemon['name'] = row.css("td:nth-child(2) > a::text").get()
+      pokemon['nickname'] = row.css("td:nth-child(2) > small::text").get()
+      pokemon['url'] = row.css("td:nth-child(2) > a::attr(href)").get()
+      pokemon['types'] = row.css("td:nth-child(3) > a::text").getall()
+      pokemon['unique_id'] = f"{pokemon['number']}_{pokemon['nickname'].strip('()') if pokemon['nickname'] else pokemon['name']}".lower().replace(' ', '_')
+
       yield response.follow(
-        url, 
+        pokemon['url'], 
         self.parser_pokemon, 
         meta={
-          "unique_id": f"{number}-{nickname.strip('()') if nickname else name}".lower().replace(' ', '_'),
-          "number": number, 
-          "name": name, 
-          "nickname": nickname if nickname else None,
-          "url": self.base_url + url,
-          "types": types
+          "pokemon": pokemon,
         },
         dont_filter=True 
       )
     
-  def parser_pokemon(self, response):
-    unique_id = response.meta['unique_id']
-    number = response.meta['number']
-    name = response.meta['name']
-    nickname = response.meta['nickname']
-    url = response.meta['url']
-    types = response.meta['types']
     
-    pokemon_tab_index = self.parse_pokemon_tab_index(response, nickname if nickname else name)
+  def parser_pokemon(self, response):
+    pokemon = response.meta.get('pokemon')
+
+    pokemon_tab_index = self.parse_pokemon_tab_index(response, pokemon['nickname'] if pokemon['nickname'] else pokemon['name'])
     pokemon_panel = self.parse_get_pokemon_panel(response, pokemon_tab_index)
     
     height_str = pokemon_panel.css('table.vitals-table > tbody > tr:nth-child(4) > td::text').get()
@@ -63,18 +56,13 @@ class PokeSpider(scrapy.Spider):
     weight_str = pokemon_panel.css('table.vitals-table > tbody > tr:nth-child(5) > td::text').get()
     weight_kg = float(weight_str.split()[0]) if weight_str and weight_str != '—' else None
 
-    yield {
-      "id": unique_id,
-      "number": number,
-      "name": name,
-      "nickname": nickname,
-      "types": types,
-      "height_cm": height_cm,
-      "weight_kg": weight_kg,
-      "url": url,
-      "effectiveness": self.parse_type_effectiveness(pokemon_panel),
-      "evolutions": self.parse_evolutions(response, name, nickname is not None),
-    }
+    pokemon['height_cm'] = height_cm
+    pokemon['weight_kg'] = weight_kg
+    pokemon['effectiveness'] = self.parse_type_effectiveness(pokemon_panel)
+    pokemon['evolutions'] = self.parse_evolutions(response, pokemon['name'], pokemon['nickname'] is not None)
+    
+    yield from self.parse_abilities(response, pokemon_panel, pokemon)
+    
   
   def parse_pokemon_tab_index(self, response, name_nickname):
     pokemon_tabs = response.css('#main > div.tabset-basics.sv-tabs-wrapper > div.sv-tabs-tab-list > a::text').getall()
@@ -108,19 +96,66 @@ class PokeSpider(scrapy.Spider):
         {name: effectiveness for name, effectiveness in zip(types_name, types_effectiveness)}
       )
   
-  def parse_type_effectiveness(self, panel_pokemon):
+  def parse_type_effectiveness(self, pokemon_panel):
     effectiveness = defaultdict(dict)
-    abilities_tabs = panel_pokemon.css('div:nth-child(2) > div.grid-col.span-md-12.span-lg-4 > div > div.sv-tabs-tab-list.sv-tabs-grow > a::text').getall()
+    abilities_tabs = pokemon_panel.css('div:nth-child(2) > div.grid-col.span-md-12.span-lg-4 > div > div.sv-tabs-tab-list.sv-tabs-grow > a::text').getall()
     if abilities_tabs and len(abilities_tabs) > 1:
-      effectiveness_panel = panel_pokemon.css('div:nth-child(2) > div.grid-col.span-md-12.span-lg-4 > div > div.sv-tabs-panel-list > div.sv-tabs-panel')
+      effectiveness_panel = pokemon_panel.css('div:nth-child(2) > div.grid-col.span-md-12.span-lg-4 > div > div.sv-tabs-panel-list > div.sv-tabs-panel')
       
       for i, div in enumerate(effectiveness_panel):
         tables = div.css('table')
         self.parse_get_effectiveness_from_tables(tables, effectiveness, abilities_tabs[i].lower().replace(' ', '_'))
     else: 
-      tables = panel_pokemon.css('div:nth-child(2) > div.grid-col.span-md-12.span-lg-4 > div > table')
+      tables = pokemon_panel.css('div:nth-child(2) > div.grid-col.span-md-12.span-lg-4 > div > table')
       self.parse_get_effectiveness_from_tables(tables, effectiveness)
     return effectiveness
+    
+  def parse_abilities(self, response, pokemon_panel, pokemon):
+    ability_row = pokemon_panel.css('div:nth-child(1) > div:nth-child(2) > table > tbody > tr:nth-child(6)')
+    
+    ability_names = [(name, False) for name in ability_row.css('td > span > a::text').getall()]
+    ability_urls = ability_row.css('td > span > a::attr(href)').getall()
+    hidden_ability_names = [(name, True) for name in ability_row.css('td > small > a::text').getall()]
+    hidden_ability_urls = ability_row.css('td > small > a::attr(href)').getall()
+    all_ability_names = ability_names + hidden_ability_names
+    all_ability_urls = ability_urls + hidden_ability_urls
+    
+    pokemon['abilities'] = defaultdict(dict)
+    i = 0
+    for (name, is_hidden_ability), url in zip(all_ability_names, all_ability_urls):
+      i += 1
+      yield response.follow(
+        url, 
+        self.parse_get_ability_description, 
+        meta={
+          "name": name,
+          "is_hidden_ability": is_hidden_ability,
+          "url": self.base_url + url,
+          "pokemon": pokemon,
+          "can_save": i == len(all_ability_names)
+        },
+        dont_filter=True 
+      )
+    
+  def parse_get_ability_description(self, response):
+    name = response.meta.get("name")
+    is_hidden_ability = response.meta.get("is_hidden_ability")
+    url = response.meta.get("url")
+    pokemon = response.meta.get("pokemon")
+    can_save = response.meta.get("can_save")
+
+    ability_desc = response.xpath('//*[@id="main"]/div[1]/div[1]/p//text()').getall()
+    ability_desc = " ".join([t.strip() for t in ability_desc if t.strip()])
+    
+    pokemon['abilities'][name.lower().replace(' ', '_')] = {
+      "name": name,
+      "description": ability_desc,
+      "is_hidden_ability": is_hidden_ability,
+      "url": url,
+    }
+    
+    if can_save:
+      yield { pokemon['unique_id']: pokemon }
 
   def parse_evolutions(self, response, name, has_nickname):
     # Ignora os pokemons que são evoluções do Eevee (Se for o próprio Eevee, esta permitido)
