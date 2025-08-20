@@ -13,7 +13,7 @@ O que devemos buscar de cada Pokémon obrigatoriamente:
 - [X] Tamanho em cm
 - [X] Peso em kg apenas
 - [X] Salvar a efetividade de cada tipo sobre o Pokemon
-- [ ] Habilidades (link para outra página)
-    - [ ] URL da página
-    - [ ] Nome
-    - [ ] Descrição do efeito
+- [X] Habilidades (link para outra página)
+    - [X] URL da página
+    - [X] Nome
+    - [X] Descrição do efeito

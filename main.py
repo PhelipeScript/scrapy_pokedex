@@ -6,7 +6,8 @@ class PokeSpider(scrapy.Spider):
   name = 'pokespider'
   base_url = 'https://pokemondb.net'
   start_urls = [f'{base_url}/pokedex/all']
-  
+  ALL_TYPES = ['Normal', 'Fire', 'Water', 'Grass', 'Electric', 'Ice', 'Fighting', 'Poison', 'Ground', 'Flying', 'Psychic', 'Bug', 'Rock', 'Ghost', 'Dragon', 'Dark', 'Steel', 'Fairy']
+
   custom_settings = {
       "FEEDS": {
           "pokemons.json": {
@@ -25,7 +26,7 @@ class PokeSpider(scrapy.Spider):
       pokemon['number'] = row.css("td:first-child > span::text").get()
       pokemon['name'] = row.css("td:nth-child(2) > a::text").get()
       pokemon['nickname'] = row.css("td:nth-child(2) > small::text").get()
-      pokemon['url'] = row.css("td:nth-child(2) > a::attr(href)").get()
+      pokemon['url'] = self.base_url + row.css("td:nth-child(2) > a::attr(href)").get()
       pokemon['types'] = row.css("td:nth-child(3) > a::text").getall()
       pokemon['unique_id'] = f"{pokemon['number']}_{pokemon['nickname'].strip('()') if pokemon['nickname'] else pokemon['name']}".lower().replace(' ', '_')
       pokemon['evolutions'] = []
@@ -168,11 +169,12 @@ class PokeSpider(scrapy.Spider):
       pokemons_req_splitted = []
       for span in el.css(':scope > div.infocard > span:nth-child(2)'):
         info = [s.strip() for s in span.xpath('.//text()').getall() if s.strip()]
-        pokemons_info.append((info[0].replace('#', ''), info[1], info[2]))
+        link = span.css(':scope > a::attr(href)').get()
+        pokemons_info.append((info[0].replace('#', ''), info[1], info[2], link))
 
       for small in el.css(':scope > span.infocard'):
         item = small.xpath('./small/a//text()').getall() 
-        item = item if item else None
+        item = "".join(small.xpath('./small//text()').getall()) if item else None
         if item:
           pokemons_req.append(item)
         else:
@@ -181,9 +183,10 @@ class PokeSpider(scrapy.Spider):
       
       for div in el.css(':scope > span.infocard-evo-split > div'):
         info = [s.strip() for s in div.xpath('./div/span[2]//text()').getall() if s.strip()]
-        pokemons_info_splitted.append((info[0].replace('#', ''), info[1], info[2]))
+        link = div.css(':scope > div.infocard > span:nth-child(2) > a::attr(href)').get()
+        pokemons_info_splitted.append((info[0].replace('#', ''), info[1], info[2], link))
         item = div.css(':scope > span > small > a::text').getall()
-        item = item if item else None
+        item = "".join(div.xpath('./span/small//text()').getall()) if item else None
         if item:
           pokemons_req_splitted.append(item)
         else:
@@ -191,59 +194,54 @@ class PokeSpider(scrapy.Spider):
           pokemons_req_splitted.append(level)
 
       i = 0
-      evo_found = False
       has_nickname = pokemon['nickname'] is not None
       
-      for id, name, type_or_nickname in pokemons_info:
-        if evo_found: break
+      for id, name, type_or_nickname, url in pokemons_info:
+        # if evo_found: break
         if pokemon['name'] == name:
           if has_nickname and type_or_nickname == pokemon['nickname']:
             pokemon_found = True
-            evo_found = self.find_pokemon_evolution(pokemons_info, pokemons_req, pokemon, has_nickname, len(pokemons_info_splitted) > 0, i)
+            continue
           elif not has_nickname and type_or_nickname in pokemon['types']:
             pokemon_found = True
-            evo_found = self.find_pokemon_evolution(pokemons_info, pokemons_req, pokemon, has_nickname, len(pokemons_info_splitted) > 0, i)
+            continue
+        if pokemon_found:
+          self.find_pokemon_evolution(pokemons_info, pokemons_req, pokemon, has_nickname, i)
         if i >= 0 and len(pokemons_req) > 0:
           del pokemons_req[0]
         i += 1
 
-      if pokemon['name'] == "Eevee" or (pokemon_found and not evo_found and len(pokemons_info_splitted) > 0):
+      if pokemon['name'] == "Eevee" or (pokemon_found and len(pokemons_info_splitted) > 0):
         i = 0
-        for id, name, type_or_nickname in pokemons_info_splitted:
+        for id, name, type_or_nickname, url in pokemons_info_splitted:
           pokemon['evolutions'].append({
-            'unique_id': f'{id}_{name}_{type_or_nickname}'.lower().replace(' ', '_') if not type_or_nickname in pokemon['types'] else f'{id}_{name}'.lower().replace(' ', '_'),
+            'unique_id': f'{id}_{type_or_nickname}'.lower().replace(' ', '_') if not type_or_nickname in self.ALL_TYPES else f'{id}_{name}'.lower().replace(' ', '_'),
             'numero': id,
             'name': name,
-            'nickname': type_or_nickname if not type_or_nickname in pokemon['types'] else None,
-            'requirement': pokemons_req_splitted[0] if len(pokemons_req_splitted) > 0 else None
+            'nickname': type_or_nickname if not type_or_nickname in self.ALL_TYPES else None,
+            'requirement': pokemons_req_splitted[0] if len(pokemons_req_splitted) > 0 else None,
+            'url': self.base_url + url
           })
           if len(pokemons_req_splitted) > 0:
             del pokemons_req_splitted[0]
           i+=1
-        evo_found = True
+    if len(pokemon['evolutions']) == 0:
+      pokemon['evolutions'] = None
         
         
-  def find_pokemon_evolution(self, pokemons_info, pokemons_req, pokemon, has_nickname, has_splitted_pokemons, idx):
-    print(f'achei {pokemon['name']} ({'Sem nickname' if not has_nickname else 'com nickname'})')
+  def find_pokemon_evolution(self, pokemons_info, pokemons_req, pokemon, has_nickname, idx):
     if len(pokemons_info) > idx and len(pokemons_req) > 0:
-      ev_id, ev_name, ev_type_or_nickname = pokemons_info[idx+1]
+      ev_id, ev_name, ev_type_or_nickname, url = pokemons_info[idx+1]
       if ev_name != pokemon['name']:
         pokemon['evolutions'].append({
-          'unique_id': f'{ev_id}_{ev_name}_{ev_type_or_nickname}'.lower().replace(' ', '_') if not ev_type_or_nickname in pokemon['types'] else f'{ev_id}_{ev_name}'.lower().replace(' ', '_'),
+          'unique_id': f'{ev_id}_{ev_type_or_nickname}'.lower().replace(' ', '_') if not ev_type_or_nickname in self.ALL_TYPES else f'{ev_id}_{ev_name}'.lower().replace(' ', '_'),
           'numero': ev_id,
           'name': ev_name,
-          'nickname': ev_type_or_nickname if not ev_type_or_nickname in pokemon['types'] else None,
-          'requirement': pokemons_req[0] if len(pokemons_req) > 0 else None
+          'nickname': ev_type_or_nickname if not ev_type_or_nickname in self.ALL_TYPES else None,
+          'requirement': pokemons_req[0] if len(pokemons_req) > 0 else None,
+          'url': self.base_url + url
         })
         return True
-      elif has_splitted_pokemons:
-        print('Esse pokemon tem opções de evolução:')
-      else:
-        pokemon['evolutions'] = None
-    elif has_splitted_pokemons:
-        print('Esse pokemon tem opções de evolução:')
-    else:
-      pokemon['evolutions'] = None
     return False
     
 
