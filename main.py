@@ -1,3 +1,6 @@
+import colors
+import pprint
+from mongodb import MongoDB
 import scrapy
 from collections import defaultdict
 from scrapy.crawler import CrawlerProcess
@@ -18,8 +21,12 @@ class PokeSpider(scrapy.Spider):
       },
       "LOG_LEVEL": "ERROR",
   }
+  
+  def clean_output(self):
+    open("pokemons.json", "w").close()
 
   def parse(self, response):
+    self.clean_output()
     rows = response.css('table#pokedex > tbody > tr')
     for row in rows:
       pokemon = defaultdict(dict)
@@ -31,6 +38,7 @@ class PokeSpider(scrapy.Spider):
       pokemon['unique_id'] = f"{pokemon['number']}_{pokemon['nickname'].strip('()') if pokemon['nickname'] else pokemon['name']}".lower().replace(' ', '_')
       pokemon['evolutions'] = []
 
+      print(f"\t{colors.BRIGHT_CYAN}Buscando dados do pokemon: {pokemon['nickname'] if pokemon.get('nickname') else pokemon['name']}{colors.RESET}")
       yield response.follow(
         pokemon['url'], 
         self.parser_pokemon, 
@@ -60,7 +68,7 @@ class PokeSpider(scrapy.Spider):
 
     pokemon['height_cm'] = height_cm
     pokemon['weight_kg'] = weight_kg
-    pokemon['effectiveness'] = self.parse_type_effectiveness(pokemon_panel)
+    pokemon['effectiveness'] = self.parse_type_effectiveness(pokemon_panel, pokemon)
     self.parse_pokemon_evolutions(response, pokemon)
     
     yield from self.parse_abilities(response, pokemon_panel, pokemon)
@@ -90,7 +98,7 @@ class PokeSpider(scrapy.Spider):
         elif eff.isdigit():
           types_effectiveness.append(int(eff))
         elif eff == '':
-          types_effectiveness.append(None)
+          types_effectiveness.append(0)
         else: 
           types_effectiveness.append(eff)
 
@@ -98,7 +106,8 @@ class PokeSpider(scrapy.Spider):
         {name: effectiveness for name, effectiveness in zip(types_name, types_effectiveness)}
       )
   
-  def parse_type_effectiveness(self, pokemon_panel):
+  def parse_type_effectiveness(self, pokemon_panel, pokemon):
+    print(f"\t{colors.BRIGHT_BLUE}Buscando Efetividade do pokemon: {pokemon['nickname'] if pokemon.get('nickname') else pokemon['name']}{colors.RESET}")
     effectiveness = defaultdict(dict)
     abilities_tabs = pokemon_panel.css('div:nth-child(2) > div.grid-col.span-md-12.span-lg-4 > div > div.sv-tabs-tab-list.sv-tabs-grow > a::text').getall()
     if abilities_tabs and len(abilities_tabs) > 1:
@@ -113,6 +122,7 @@ class PokeSpider(scrapy.Spider):
     return effectiveness
     
   def parse_abilities(self, response, pokemon_panel, pokemon):
+    print(f"\t{colors.BRIGHT_MAGENTA}Buscando Habilidades do pokemon: {pokemon['nickname'] if pokemon.get('nickname') else pokemon['name']}{colors.RESET}")
     ability_row = pokemon_panel.css('div:nth-child(1) > div:nth-child(2) > table > tbody > tr:nth-child(6)')
     
     ability_names = [(name, False) for name in ability_row.css('td > span > a::text').getall()]
@@ -160,6 +170,7 @@ class PokeSpider(scrapy.Spider):
       yield { pokemon['unique_id']: pokemon }
 
   def parse_pokemon_evolutions(self, response, pokemon):
+    print(f"\t{colors.BRIGHT_GREEN}Buscando Evoluções do pokemon: {pokemon['nickname'] if pokemon.get('nickname') else pokemon['name']}{colors.RESET}")
     pokemon_found = False
     for el in response.css('#main > div.infocard-list-evo'):
       if pokemon_found and not pokemon['name'] == "Eevee": break
@@ -249,4 +260,19 @@ class PokeSpider(scrapy.Spider):
 if __name__ == "__main__":
   process = CrawlerProcess(settings=PokeSpider.custom_settings)
   process.crawl(PokeSpider)
+  print(f"{colors.BRIGHT_YELLOW}Buscando pokemons{colors.RESET}")
   process.start()
+  print(f"{colors.BRIGHT_YELLOW}Pokemons obtidos{colors.RESET}")
+
+  db = MongoDB()
+  db.insert_pokemons()
+  
+  min_types = 2
+  pokemons_with_2_or_more_types = db.count_pokemons_by_min_types(min_types)
+  print(f"{colors.BRIGHT_YELLOW}Quantidade de pokemons com {min_types} ou mais tipos: {colors.BRIGHT_CYAN}{pokemons_with_2_or_more_types}{colors.RESET}")
+  
+  type = "Water"
+  min_level = 30
+  water_pokemons_after_level = db.fetch_evolutions_of_type_after_level(type, min_level)
+  print(f"{colors.BRIGHT_YELLOW}Pokemons do tipo água que evoluem após o nível 30:{colors.RESET}")
+  pprint.pprint(water_pokemons_after_level)
