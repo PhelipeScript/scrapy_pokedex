@@ -46,17 +46,36 @@ git clone <url-do-repositorio>
 cd pokemon-scraper
 ```
 
-2. **Instale as dependências usando Pipenv:**
-```bash
-pipenv install
-```
+2. **Escolha uma das opções de instalação:**
 
-3. **Ative o ambiente virtual:**
+### Opção A: Usando Pipenv (Recomendado)
 ```bash
+# Instale o Pipenv se não tiver
+pip install pipenv
+
+# Instale as dependências
+pipenv install
+
+# Ative o ambiente virtual
 pipenv shell
 ```
 
-4. **Configure a conexão MongoDB:**
+### Opção B: Usando pip tradicional
+```bash
+# Crie um ambiente virtual (opcional mas recomendado)
+python -m venv venv
+
+# Ative o ambiente virtual
+# No Windows:
+venv\Scripts\activate
+# No macOS/Linux:
+source venv/bin/activate
+
+# Instale as dependências
+pip install scrapy pymongo
+```
+
+3. **Configure a conexão MongoDB:**
    - Edite o arquivo `mongodb.py` com suas credenciais do MongoDB
    - Ou configure as variáveis de ambiente necessárias
 
